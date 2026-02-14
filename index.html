@@ -280,24 +280,12 @@ tr.open .arr{transform:rotate(180deg);color:var(--navy)}
   </div>
 </div>
 
-<!-- ============ DELETE MODAL ============ -->
-<div class="modal-bg" id="delModal">
-  <div class="modal">
-    <h3>⚠️ Confirm Delete</h3>
-    <p id="delMsg">This will permanently remove the selected application(s). This action cannot be undone.</p>
-    <div class="warn">🔒 Enter admin password to confirm deletion</div>
-    <input type="password" id="delPwd" placeholder="Enter password to confirm">
-    <div class="modal-btns">
-      <button class="mbtn mbtn-c" onclick="closeModal()">Cancel</button>
-      <button class="mbtn mbtn-d" onclick="confirmDelete()">Delete Permanently</button>
-    </div>
-  </div>
-</div>
+<!-- Dashboard starts -->
 
 <script>
 var API='https://script.google.com/macros/s/AKfycbyodXULxZ5PC4316pSU5380_U79_Ibh75Pyya35zZ_bh-Xs-2GUiU0pXlqP_5fKqqsI4Q/exec';
 var CRED_U='admin',CRED_P='Flarize@2025';
-var AUTH='',ALL=[],CF='all',SQ='',SEL={},DEL_REFS=[];
+var AUTH='',ALL=[],CF='all',SQ='',SEL={};
 
 /* Auto-login if session exists */
 (function(){
@@ -501,47 +489,47 @@ async function bulkAction(status){
   toast(done+' updated'+(fail?' ('+fail+' failed)':''),'ok');
 }
 
-/* ---- Delete ---- */
-function singleDel(ref){DEL_REFS=[ref];showModal(1)}
-function bulkDelete(){var refs=Object.keys(SEL);if(!refs.length)return;DEL_REFS=refs;showModal(refs.length)}
-function showModal(count){
-  document.getElementById('delMsg').textContent='This will permanently remove '+count+' application'+(count>1?'s':'')+'. This action cannot be undone.';
-  document.getElementById('delPwd').value='';
-  document.getElementById('delModal').classList.add('show');
-  setTimeout(function(){document.getElementById('delPwd').focus()},100);
-}
-function closeModal(){document.getElementById('delModal').classList.remove('show');DEL_REFS=[]}
-
-async function confirmDelete(){
-  var pwd=document.getElementById('delPwd').value;
+/* ---- Delete (single) ---- */
+function singleDel(ref){
+  var pwd=prompt('Enter admin password to delete:');
+  if(!pwd)return;
   if(pwd!==CRED_P){toast('Wrong password','err');return}
-  closeModal();
-  var done=0,fail=0;
-  toast('Deleting '+DEL_REFS.length+' application(s)...','ok');
-  for(var k=0;k<DEL_REFS.length;k++){
-    try{
-      /* Try delete action first, fall back to marking as Deleted */
-      var r=await fetch(API+'?action=delete&pin='+encodeURIComponent(AUTH)+'&ref='+encodeURIComponent(DEL_REFS[k]));
-      var d=await r.json();
-      if(d.success){
-        done++;
-        for(var j=ALL.length-1;j>=0;j--){if(ALL[j].reference_id===DEL_REFS[k]){ALL.splice(j,1);break}}
-      }else{
-        /* Fallback: mark status as Deleted */
-        var r2=await fetch(API+'?action=update&pin='+encodeURIComponent(AUTH)+'&ref='+encodeURIComponent(DEL_REFS[k])+'&status=Deleted&remarks=Deleted+by+admin');
-        var d2=await r2.json();
-        if(d2.success){
-          done++;
-          for(var j=ALL.length-1;j>=0;j--){if(ALL[j].reference_id===DEL_REFS[k]){ALL.splice(j,1);break}}
-        }else fail++;
-      }
-    }catch(e){fail++}
-  }
-  SEL={};DEL_REFS=[];updBulk();stats();render();
-  toast(done+' deleted'+(fail?' ('+fail+' failed)':''),done?'ok':'err');
+  doDelete([ref]);
 }
 
-document.getElementById('delPwd').addEventListener('keydown',function(e){if(e.key==='Enter')confirmDelete()});
+/* ---- Delete (bulk) ---- */
+function bulkDelete(){
+  var refs=Object.keys(SEL);if(!refs.length)return;
+  var pwd=prompt('Enter admin password to delete '+refs.length+' application(s):');
+  if(!pwd)return;
+  if(pwd!==CRED_P){toast('Wrong password','err');return}
+  doDelete(refs);
+}
+
+/* ---- Actual delete logic ---- */
+async function doDelete(refs){
+  var done=0;
+  toast('Deleting '+refs.length+'...','ok');
+  for(var k=0;k<refs.length;k++){
+    var ref=refs[k];
+    /* Try delete action first */
+    try{
+      var r=await fetch(API+'?action=delete&pin='+encodeURIComponent(AUTH)+'&ref='+encodeURIComponent(ref));
+      var d=await r.json();
+      if(d.success){done++;rmLocal(ref);continue}
+    }catch(e){}
+    /* Fallback: mark as Deleted */
+    try{
+      var r2=await fetch(API+'?action=update&pin='+encodeURIComponent(AUTH)+'&ref='+encodeURIComponent(ref)+'&status=Deleted&remarks=Deleted+by+admin');
+      var d2=await r2.json();
+      if(d2.success){done++;rmLocal(ref)}
+    }catch(e2){}
+  }
+  SEL={};updBulk();stats();render();
+  toast(done?done+' deleted':'Delete failed','ok');
+}
+
+function rmLocal(ref){for(var j=ALL.length-1;j>=0;j--){if(ALL[j].reference_id===ref){ALL.splice(j,1);break}}}
 
 /* ---- Toast ---- */
 function toast(msg,type){
