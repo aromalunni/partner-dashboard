@@ -295,9 +295,23 @@ tr.open .arr{transform:rotate(180deg);color:var(--navy)}
 </div>
 
 <script>
-var API='https://script.google.com/macros/s/AKfycbyodXULxZ5PC4316pSU5380_U79_Ibh75Pyya35zZ_bh-Xs-2GUiU0pXlqP_5fKqqsI4Q/exec';
+var API='https://script.google.com/macros/s/AKfycbz3ZzNHLWQGGLCIuf35oV3X9J1C9tSk8Vr4GEuW-OQ8pII38dRm8r1BAzHjzAQ4pbbm_A/exec';
 var CRED_U='admin',CRED_P='Flarize@2025';
 var AUTH='',ALL=[],CF='all',SQ='',SEL={},DEL_REFS=[];
+
+/* Auto-login if session exists */
+(function(){
+  try{
+    var sa=sessionStorage.getItem('fz_auth');
+    var su=sessionStorage.getItem('fz_user');
+    if(sa&&su===CRED_U){
+      AUTH=sa;
+      document.getElementById('loginScreen').style.display='none';
+      document.getElementById('dash').style.display='block';
+      loadData();
+    }
+  }catch(e){}
+})();
 
 /* ---- Login ---- */
 document.getElementById('inpP').addEventListener('keydown',function(e){if(e.key==='Enter')login()});
@@ -307,12 +321,13 @@ function login(){
   var u=document.getElementById('inpU').value.trim(),p=document.getElementById('inpP').value;
   if(u!==CRED_U||p!==CRED_P){document.getElementById('loginErr').style.display='block';return}
   AUTH=p;
+  try{sessionStorage.setItem('fz_auth',p);sessionStorage.setItem('fz_user',u)}catch(e){}
   document.getElementById('loginErr').style.display='none';
   document.getElementById('loginScreen').style.display='none';
   document.getElementById('dash').style.display='block';
   loadData();
 }
-function logout(){AUTH='';ALL=[];SEL={};document.getElementById('dash').style.display='none';document.getElementById('loginScreen').style.display='grid';document.getElementById('inpP').value=''}
+function logout(){AUTH='';ALL=[];SEL={};try{sessionStorage.removeItem('fz_auth');sessionStorage.removeItem('fz_user')}catch(e){};document.getElementById('dash').style.display='none';document.getElementById('loginScreen').style.display='grid';document.getElementById('inpP').value=''}
 
 /* ---- Load ---- */
 async function loadData(){
@@ -504,12 +519,21 @@ async function confirmDelete(){
   toast('Deleting '+DEL_REFS.length+' application(s)...','ok');
   for(var k=0;k<DEL_REFS.length;k++){
     try{
+      /* Try delete action first, fall back to marking as Deleted */
       var r=await fetch(API+'?action=delete&pin='+encodeURIComponent(AUTH)+'&ref='+encodeURIComponent(DEL_REFS[k]));
       var d=await r.json();
       if(d.success){
         done++;
         for(var j=ALL.length-1;j>=0;j--){if(ALL[j].reference_id===DEL_REFS[k]){ALL.splice(j,1);break}}
-      }else fail++;
+      }else{
+        /* Fallback: mark status as Deleted */
+        var r2=await fetch(API+'?action=update&pin='+encodeURIComponent(AUTH)+'&ref='+encodeURIComponent(DEL_REFS[k])+'&status=Deleted&remarks=Deleted+by+admin');
+        var d2=await r2.json();
+        if(d2.success){
+          done++;
+          for(var j=ALL.length-1;j>=0;j--){if(ALL[j].reference_id===DEL_REFS[k]){ALL.splice(j,1);break}}
+        }else fail++;
+      }
     }catch(e){fail++}
   }
   SEL={};DEL_REFS=[];updBulk();stats();render();
