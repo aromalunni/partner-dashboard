@@ -48,6 +48,7 @@ body{font-family:'DM Sans',system-ui,sans-serif;background:var(--bg);color:var(-
 .lf input::placeholder{color:var(--t3)}
 .login-btn{width:100%;padding:13px;margin-top:6px;background:linear-gradient(135deg,var(--navy),var(--navy2));color:#fff;border:none;border-radius:8px;font-size:14px;font-weight:700;cursor:pointer;font-family:inherit;transition:.2s;box-shadow:0 4px 14px rgba(30,58,95,0.25)}
 .login-btn:hover{transform:translateY(-1px);box-shadow:0 6px 20px rgba(30,58,95,0.35)}
+.login-btn:disabled{opacity:0.6;cursor:not-allowed;transform:none;box-shadow:none}
 .login-err{color:var(--red);font-size:12px;text-align:center;margin-top:10px;display:none;font-weight:600}
 .lr-foot{margin-top:22px;text-align:center;font-size:11px;color:var(--t3)}
 @media(max-width:768px){
@@ -296,7 +297,8 @@ tr.open .arr{transform:rotate(180deg);color:var(--navy)}
 
 <script>
 var API='https://script.google.com/macros/s/AKfycbyodXULxZ5PC4316pSU5380_U79_Ibh75Pyya35zZ_bh-Xs-2GUiU0pXlqP_5fKqqsI4Q/exec';
-var CRED_U='admin',CRED_P='Flarize@2025';
+/* NOTE: Credentials are validated server-side via the API pin check.
+   Do NOT hardcode passwords in client-side code. */
 var AUTH='',ALL=[],CF='all',SQ='',SEL={},DEL_REFS=[];
 
 /* Auto-login if session exists */
@@ -304,8 +306,8 @@ var AUTH='',ALL=[],CF='all',SQ='',SEL={},DEL_REFS=[];
   try{
     var sa=sessionStorage.getItem('fz_auth');
     var su=sessionStorage.getItem('fz_user');
-    if(sa&&su===CRED_U){
-      AUTH=sa;
+    if(sa&&su){
+      AUTH=atob(sa);
       document.getElementById('loginScreen').style.display='none';
       document.getElementById('dash').style.display='block';
       loadData();
@@ -317,17 +319,30 @@ var AUTH='',ALL=[],CF='all',SQ='',SEL={},DEL_REFS=[];
 document.getElementById('inpP').addEventListener('keydown',function(e){if(e.key==='Enter')login()});
 document.getElementById('inpU').addEventListener('keydown',function(e){if(e.key==='Enter')document.getElementById('inpP').focus()});
 
-function login(){
+async function login(){
   var u=document.getElementById('inpU').value.trim(),p=document.getElementById('inpP').value;
-  if(u!==CRED_U||p!==CRED_P){document.getElementById('loginErr').style.display='block';return}
-  AUTH=p;
-  try{sessionStorage.setItem('fz_auth',p);sessionStorage.setItem('fz_user',u)}catch(e){}
-  document.getElementById('loginErr').style.display='none';
-  document.getElementById('loginScreen').style.display='none';
-  document.getElementById('dash').style.display='block';
-  loadData();
+  if(!u||!p){document.getElementById('loginErr').textContent='Please enter username and password';document.getElementById('loginErr').style.display='block';return}
+  document.querySelector('.login-btn').disabled=true;
+  document.querySelector('.login-btn').textContent='Signing in...';
+  try{
+    var r=await fetch(API+'?action=list&pin='+encodeURIComponent(p));
+    var d=await r.json();
+    if(!d.success){document.getElementById('loginErr').textContent='Invalid username or password';document.getElementById('loginErr').style.display='block';document.querySelector('.login-btn').disabled=false;document.querySelector('.login-btn').textContent='Sign In →';return}
+    AUTH=p;
+    try{sessionStorage.setItem('fz_auth',btoa(p));sessionStorage.setItem('fz_user',u)}catch(e){}
+    document.getElementById('loginErr').style.display='none';
+    document.getElementById('loginScreen').style.display='none';
+    document.getElementById('dash').style.display='block';
+    ALL=d.data||[];SEL={};updBulk();stats();render();
+    toast('Loaded '+ALL.length+' applications','ok');
+  }catch(e){
+    document.getElementById('loginErr').textContent='Network error. Please try again.';
+    document.getElementById('loginErr').style.display='block';
+  }
+  document.querySelector('.login-btn').disabled=false;
+  document.querySelector('.login-btn').textContent='Sign In →';
 }
-function logout(){AUTH='';ALL=[];SEL={};try{sessionStorage.removeItem('fz_auth');sessionStorage.removeItem('fz_user')}catch(e){};document.getElementById('dash').style.display='none';document.getElementById('loginScreen').style.display='grid';document.getElementById('inpP').value=''}
+function logout(){AUTH='';ALL=[];SEL={};try{sessionStorage.removeItem('fz_auth');sessionStorage.removeItem('fz_user')}catch(e){}document.getElementById('dash').style.display='none';document.getElementById('loginScreen').style.display='grid';document.getElementById('inpP').value='';document.getElementById('inpU').value=''}
 
 /* ---- Load ---- */
 async function loadData(){
@@ -335,7 +350,7 @@ async function loadData(){
   try{
     var r=await fetch(API+'?action=list&pin='+encodeURIComponent(AUTH));
     var d=await r.json();
-    if(!d.success){if(d.error&&d.error.indexOf('Invalid')>-1){logout();toast('Session expired','err')};return}
+    if(!d.success){if(d.error&&d.error.indexOf('Invalid')>-1){logout();toast('Session expired','err')}else{toast('Error: '+(d.error||'Load failed'),'err')}return}
     ALL=d.data||[];SEL={};updBulk();stats();render();
     toast('Loaded '+ALL.length+' applications','ok');
   }catch(e){document.getElementById('tb').innerHTML='<tr><td colspan="8"><div class="empty">Failed to connect</div></td></tr>'}
@@ -352,8 +367,13 @@ function stats(){
 }
 
 /* ---- Filter ---- */
-function setF(f){CF=f;document.querySelectorAll('.ftab').forEach(function(e){e.classList.toggle('on',e.dataset.f===f)});render()}
-function doSearch(v){SQ=v.toLowerCase();render()}
+function setF(f){CF=f;document.querySelectorAll('.ftab').forEach(function(e){e.classList.toggle('on',e.dataset.f===f)});syncSelAll();render()}
+function doSearch(v){SQ=v.toLowerCase();syncSelAll();render()}
+function syncSelAll(){
+  var list=filtered(),allChecked=list.length>0;
+  for(var i=0;i<list.length;i++){if(!SEL[list[i].reference_id]){allChecked=false;break}}
+  document.getElementById('selAll').checked=allChecked;
+}
 function filtered(){
   var out=[];
   for(var i=0;i<ALL.length;i++){
@@ -369,7 +389,8 @@ function filtered(){
 function toggleSel(ref,checked,ev){
   if(ev)ev.stopPropagation();
   if(checked)SEL[ref]=true;else delete SEL[ref];
-  var r=document.querySelector('tr[data-ref="'+ref+'"]');if(r)r.classList.toggle('sel',checked);
+  var rows=document.querySelectorAll('tr[data-ref]');
+  for(var k=0;k<rows.length;k++){if(rows[k].getAttribute('data-ref')===ref){rows[k].classList.toggle('sel',checked);break}}
   updBulk();
 }
 function toggleAll(checked){
@@ -391,11 +412,11 @@ function updBulk(){
 
 /* ---- Render ---- */
 function bc(s){if(!s||s==='Under Review')return'b-rev';if(s==='Approved')return'b-app';return'b-rej'}
-function esc(s){if(!s)return'';return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;')}
+function esc(s){if(s===null||s===undefined||s==='')return'';return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;')}
 function flink(url){
   if(!url||url==='-'||url==='undefined')return'<span style="color:var(--t3)">—</span>';
   var parts=url.split(' , '),out='';
-  for(var i=0;i<parts.length;i++){var u=parts[i].trim();if(u)out+='<a href="'+esc(u)+'" target="_blank">📎 File '+(i+1)+'</a> '}
+  for(var i=0;i<parts.length;i++){var u=parts[i].trim();if(u){if(!/^https?:\/\//i.test(u))continue;out+='<a href="'+esc(u)+'" target="_blank" rel="noopener noreferrer">📎 File '+(i+1)+'</a> '}}
   return out||'<span style="color:var(--t3)">—</span>';
 }
 
@@ -405,7 +426,8 @@ function render(){
   var h='';
   for(var i=0;i<list.length;i++){
     var a=list[i],st=a.status||'Under Review',ref=a.reference_id||'';
-    var dt=a.submitted_at?new Date(a.submitted_at).toLocaleDateString('en-IN',{day:'numeric',month:'short'}):'—';
+    var dtObj=a.submitted_at?new Date(a.submitted_at):null;
+    var dt=(dtObj&&!isNaN(dtObj.getTime()))?dtObj.toLocaleDateString('en-IN',{day:'numeric',month:'short'}):'—';
     var isSel=!!SEL[ref];
     h+='<tr class="row'+(isSel?' sel':'')+'" data-ref="'+esc(ref)+'" id="r'+i+'" onclick="tog('+i+')">';
     h+='<td onclick="event.stopPropagation()"><input type="checkbox" class="chk" id="cb_'+i+'" '+(isSel?'checked':'')+' onchange="toggleSel(\''+esc(ref)+'\',this.checked,event)"></td>';
@@ -469,7 +491,9 @@ function tog(i){
 }
 
 /* ---- Update status ---- */
+var _busy=false;
 async function doUp(i,status){
+  if(_busy)return;_busy=true;
   var list=filtered(),a=list[i],remarks=(document.getElementById('rem'+i)?document.getElementById('rem'+i).value:''),ref=a.reference_id;
   try{
     var r=await fetch(API+'?action=update&pin='+encodeURIComponent(AUTH)+'&ref='+encodeURIComponent(ref)+'&status='+encodeURIComponent(status)+'&remarks='+encodeURIComponent(remarks));
@@ -479,16 +503,18 @@ async function doUp(i,status){
       stats();render();toast(ref+' → '+status,'ok');
     }else{toast('Error: '+(d.error||'Failed'),'err')}
   }catch(e){toast('Network error','err')}
+  _busy=false;
 }
 
 /* ---- Bulk action ---- */
 async function bulkAction(status){
-  var refs=Object.keys(SEL);if(!refs.length)return;
+  if(_busy)return;_busy=true;
+  var refs=Object.keys(SEL);if(!refs.length){_busy=false;return}
   var done=0,fail=0;
   toast('Updating '+refs.length+' applications...','ok');
   for(var k=0;k<refs.length;k++){
     try{
-      var r=await fetch(API+'?action=update&pin='+encodeURIComponent(AUTH)+'&ref='+encodeURIComponent(refs[k])+'&status='+encodeURIComponent(status)+'&remarks=Bulk+'+status);
+      var r=await fetch(API+'?action=update&pin='+encodeURIComponent(AUTH)+'&ref='+encodeURIComponent(refs[k])+'&status='+encodeURIComponent(status)+'&remarks='+encodeURIComponent('Bulk '+status));
       var d=await r.json();
       if(d.success){
         done++;
@@ -498,6 +524,7 @@ async function bulkAction(status){
   }
   SEL={};updBulk();stats();render();
   toast(done+' updated'+(fail?' ('+fail+' failed)':''),'ok');
+  _busy=false;
 }
 
 /* ---- Delete ---- */
@@ -512,9 +539,10 @@ function showModal(count){
 function closeModal(){document.getElementById('delModal').classList.remove('show');DEL_REFS=[]}
 
 async function confirmDelete(){
+  if(_busy)return;
   var pwd=document.getElementById('delPwd').value;
-  if(pwd!==CRED_P){toast('Wrong password','err');return}
-  closeModal();
+  if(pwd!==AUTH){toast('Wrong password','err');return}
+  _busy=true;closeModal();
   var done=0,fail=0;
   toast('Deleting '+DEL_REFS.length+' application(s)...','ok');
   for(var k=0;k<DEL_REFS.length;k++){
@@ -527,7 +555,7 @@ async function confirmDelete(){
         for(var j=ALL.length-1;j>=0;j--){if(ALL[j].reference_id===DEL_REFS[k]){ALL.splice(j,1);break}}
       }else{
         /* Fallback: mark status as Deleted */
-        var r2=await fetch(API+'?action=update&pin='+encodeURIComponent(AUTH)+'&ref='+encodeURIComponent(DEL_REFS[k])+'&status=Deleted&remarks=Deleted+by+admin');
+        var r2=await fetch(API+'?action=update&pin='+encodeURIComponent(AUTH)+'&ref='+encodeURIComponent(DEL_REFS[k])+'&status=Deleted&remarks='+encodeURIComponent('Deleted by admin'));
         var d2=await r2.json();
         if(d2.success){
           done++;
@@ -538,16 +566,22 @@ async function confirmDelete(){
   }
   SEL={};DEL_REFS=[];updBulk();stats();render();
   toast(done+' deleted'+(fail?' ('+fail+' failed)':''),done?'ok':'err');
+  _busy=false;
 }
 
 document.getElementById('delPwd').addEventListener('keydown',function(e){if(e.key==='Enter')confirmDelete()});
+document.getElementById('delModal').addEventListener('click',function(e){if(e.target===this)closeModal()});
+document.addEventListener('keydown',function(e){if(e.key==='Escape'&&document.getElementById('delModal').classList.contains('show'))closeModal()});
 
 /* ---- Toast ---- */
+var _activeToast=null;
 function toast(msg,type){
+  if(_activeToast){try{_activeToast.remove()}catch(e){}_activeToast=null}
   var t=document.createElement('div');t.className='toast '+(type||'ok');
   t.innerHTML=(type==='err'?'<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/></svg>':'<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.5"><path d="M20 6L9 17l-5-5"/></svg>')+esc(msg);
   document.body.appendChild(t);
-  setTimeout(function(){t.style.opacity='0';t.style.transition='opacity .3s';setTimeout(function(){t.remove()},300)},3000);
+  _activeToast=t;
+  setTimeout(function(){t.style.opacity='0';t.style.transition='opacity .3s';setTimeout(function(){t.remove();if(_activeToast===t)_activeToast=null},300)},3000);
 }
 </script>
 </body>
